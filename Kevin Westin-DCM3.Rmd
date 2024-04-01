@@ -1,0 +1,253 @@
+---
+title: "DCM3"
+author: "Kevin Westin"
+date: '2022-03-16'
+output: pdf_document
+header-include:
+  -\usepackage{multirow}
+  -\usepackage{booktabs}
+  -\usepackage{graphics}
+  -\usepackage{float}
+bibliography: references.bib
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+```{r include=FALSE}
+library(essurvey)
+library(haven)
+library(tidyverse)
+library(nnet)
+library(kableExtra)
+library(broom)
+library(modelsummary)
+library(magrittr)
+library(knitr)
+library(scales)
+library(effects)
+library(ggeffects)
+library(ggplot2)
+library(ggthemes)
+```
+
+```{r warning=FALSE, include=FALSE}
+ess <- read_dta("ESS8GB.dta", encoding = "macroman")#Encoding = macroman to avoid encoding issues. This is a mac specific problem
+ess <- recode_missings(ess)
+
+```
+
+```{r}
+ess_filt <- ess %>% # Create new data set with desired variables
+        select(edulvlb,prtvtbgb,imbgeco,gndr,agea) %>%  
+        mutate(prtvtbgb = as_factor(prtvtbgb)) %>% 
+        drop_na()
+##RECODING
+ess2016gb <- ess_filt %>%
+        mutate(edulvlb = as.integer(edulvlb > 500 & edulvlb < 900), #Others category are excluded
+               prtvtbgb = fct_other(prtvtbgb, keep = c("Conservative","Labour","Liberal Democrat","UK Independence Party")),
+               prtvtbgb = fct_relevel(prtvtbgb, "Labour","Conservative"),
+               male = as.integer(gndr == 1), # Males are coded as 1
+               agea = as.integer(agea),
+               age_rescale = as.integer(agea)/10, # Rescaling of age
+               imbgeco = as.integer(imbgeco))
+
+#sapply(ess2016gb, function(x) sum(is.na(x)))
+
+ #Others are excluded
+```
+
+# Introduction
+
+This assignment explores the relationship between party vote choice in the 2015 UK parliamentary election and opinions regarding the impact of immigration on the economy. In order to do so, we must first consider the political landscape surrounding the 2015 general election. It is not easy to separate the outcome of the 2015 election without considering the divide in public opinion regarding the EU referendum debate. Why? In @emerging2018a, Sara Hobolt has argued that voters have developed a sense of emotional attachment with being either a 'Remainer' or a 'Leaver.' These identities have, in turn, become a lens through which the Brexit debate is interpreted. The social and emotional intensity of these Brexit identities seems to be far higher than those for parties. For example, Brexit identities are now much more prevalent than traditional party identities. While 31% do not think of themselves as supporters of a political party, only 11% do not think of themselves as a 'Remainer' or a "Leaver". In addition, 44% say they are a 'very strong' Remainer or Leaver, while only 9% say they identify 'very strongly' with a political party [@remainer2018]. Thus, party vote choice might not represent identification with a political party but rather alignment on the 'Remain' and "Leave" dichotomy. Given that immigration dominated much of the 2015 general election and was at the heart of the referendum debate, it is reasonable to assume that negative opinions regarding the economic impact of immigration will be associated with parties positioning themselves on the "Leave" side of the spectrum. Conversely, we expect positive opinions regarding the economic impact of immigration to be associated with parties positioning themselves on the "Remain" side of the spectrum. So, where did the parties align themselves? In 2015, the Conservative party was moderately Eurosceptic. For every Remain voter who supported the Conservatives in 2015, nearly 1.5 Leave supporters did so. Thus, we expect there to be a slight negative relationship between positive opinions on the economic impact of immigration. In Labour's case, for every Leave voter whose support the party won in 2015, around two Remain supporters were backing the party. Thus, we expect a positive relationship between positive opinions on the economic impact of immigration. The Liberal Democrat party has always been Britain's most Europhile party in its policy position. Thus, we expect the relationship between positive opinions on the economic impact of immigration to be positive. Conversely, the UK independence party (UKIP) is probably the most Europhobic party [@brexitr]. Thus, we expect the relationship between positive opinions on the economic impact of immigration to be negative. Finally, regarding age, gender, and higher education control variables, we expect higher education to be associated with more liberal attitudes. The main reason for these expectations is that this demographic tends to be younger and live in big cities, which are social characteristics associated with more positive attitudes towards immigration (ref). However, I expect these controlvariables to have less of an effect on party vote choice given what the above reasoning.
+
+# Data
+
+The data used to analyze the relationship between party vote choice and opinions of the economic impact of immigration are collected from The European Social Survey (ESS). ESS is a cross-national survey that has been conducted across Europe since 2001. The survey measures diverse populations' attitudes, beliefs, and behavior patterns in more than thirty nations. The analysis is restricted to the eighth round carried out in 2016 in the UK. For all of the variables, NA values were omitted. The reason for this was to make sure that we get an equal number of observations when comparing the two models. The variable party vote choice has been recoded to consider the four biggest parties (described above). The rest are coded as "others". The reference category for this variable is set to "Labor". The variable "Higher Education" is a binary variable operationalized so that respondents with tertiary education are coded as 1, and respondents with lower education are coded as 0. The sex variable is a binary variable, taking the value 0 for females and 1 for males. The variable opinion on the economic impact of immigration is a 10-point scale from bad to good Finally, age is a continuous variable, rescaled by dividing each respondent's age by ten. Rescaling was done for the sake of interpretation. Descriptive statistics of the variables described are presented in table 1. To evaluate these hypotheses, two multinomial logistic regression models were estimated. The models are presented in Table 1. Model 1 displays coefficients for a model with attitudes of immigration as the only explanatory variable. Model 2 contains the coefficients for a model that considers both attitudes of immigration, age, gender, and educational attainment. Further explanation of the data follows below.
+
+```{r }
+
+ess2016gb %>%
+        select(agea,male,prtvtbgb,edulvlb,imbgeco) %>% 
+        group_by("Parties"=prtvtbgb) %>% 
+        summarise("N" = n(), 
+                  "Age" = round(mean(agea, na.rm=T)),
+                  "Sex" = paste0(round(mean(male, na.rm=T)*100,1), "%"),
+                  "Higher Education"=paste0(round(mean(edulvlb, na.rm=T)*100,1), "%"),
+                  "Attitude towards immigrants" = round(mean(imbgeco, na.rm=T),1)
+                  ) %>% 
+        kbl(caption = "Descriptive Statistics", booktabs = T,align= "lccccc") %>% 
+        kable_styling(latex_options = "HOLD_position")
+
+```
+
+# Results
+
+```{r include=FALSE}
+m1 <- multinom(prtvtbgb ~ imbgeco, data = ess2016gb,trace=F)
+m2 <- multinom(prtvtbgb ~ imbgeco + male + age_rescale + edulvlb, data = ess2016gb,trace=F)
+```
+
+```{r include=FALSE}
+models <- list(
+        "Model 1" = m1,
+        "Model 2" = m2
+)
+```
+
+```{r echo=FALSE}
+cm <- c( '(Intercept)' = 'Constant', 
+         "imbgeco" = "Economic impact of immigration", 
+         "male" = "Gender",
+         "age_rescale" = "Age",
+         "edulvlb" = "Higher Education"
+         )
+p <- c('*' = .05,'**' = .01,  '***' = .001)
+```
+
+```{r tab2, eval=FALSE, include=FALSE}
+modelsummary(models, exponentiate=T, group = term+y.level ~ model,output = "kableExtra",coef_map =cm, stars=p, statistic=NULL, notes = "Coefficients displayed as odds ratios") %>%
+        kable_styling(latex_options = "HOLD_position")
+    
+
+
+```
+
+```{=latex}
+\scalebox{0.5}{
+\setlength{\tabcolsep}{10pt}
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{lcccccccc}
+\toprule
+\toprule
+ & \multicolumn{3}{c}{Model 1} &  & \multicolumn{3}{c}{Model 2} &  \\ 
+\cmidrule(lr){2-4} \cmidrule(lr){6-8}
+  & Conservative & Liberal Democrat & UK Independence Party & Other & Conservative & Liberal Democrat & UK Independence Party & Other \\ 
+\midrule
+Constant & 1.826** & 0.090*** & 1.403 & 0.280*** & 0.704 & 0.043*** & 1.654 & 0.258** \\ 
+ & (0.185) & (0.360) & (0.242) & (0.287) & (0.317) & (0.566) & (0.482) & (0.461) \\ 
+Economic impact of immigration & 0.924** & 1.184** & 0.710*** & 1.031 & 0.931* & 1.173** & 0.725*** & 1.030 \\ 
+ & (0.029) & (0.052) & (0.046) & (0.044) & (0.031) & (0.055) & (0.048) & (0.046) \\ 
+Gender &  &  &  &  & 1.119 & 0.567* & 1.552 & 0.912 \\ 
+ &  &  &  &  & (0.134) & (0.225) & (0.226) & (0.194) \\ 
+Age &  &  &  &  & 1.152*** & 1.124 & 0.948 & 1.017 \\ 
+ &  &  &  &  & (0.040) & (0.065) & (0.067) & (0.057) \\ 
+Higher Education &  &  &  &  & 1.175 & 2.031** & 0.561* & 1.100 \\ 
+ &  &  &  &  & (0.139) & (0.228) & (0.259) & (0.199) \\ 
+ \midrule
+ \midrule
+Num.Obs. &  1293 & & & & 1293\\
+AIC & 3546.4 & & & & 3520.6\\
+edf &  8.0 & & & & 20.0\\
+\bottomrule
+\end{tabular}}
+
+\scalebox{0.5}{
+\begin{minipage}{\linewidth}
+* p < 0.05, ** p < 0.01, *** p < 0.001\\
+\end{minipage}}
+
+
+```
+
+Model 1 in the table above reveals patterns in line with the hypotheses (note that the coefficients are displayed as odds ratios). For example, in the response category Conservative, the coefficient for opinion on the economic impact of immigration was significant, suggesting that a one-unit increase on the opinion scale would decrease the odds of observing the Conservative category relative to the Labour category by a factor of 0.92. Similarly, in the response category UK Independence Party, the coefficient for the economic impact of immigration suggests that a one-unit increase on the rating scale would decrease the odds of observing the UK Independence Party category relative to the Labour category by a factor of 0.71. Conversely, the coefficient for the economic impact of immigration in the response category Liberal Democrat suggests that a one-unit increase in attitude would increase the odds of observing the Liberal Democrat category relative to the Labour category by a factor of 1.18.
+
+Model 2 in the table above includes the effects of educational attainment, gender, and age on respondents' party vote choice outcomes in the ESS. For the most part, the pattern of effects we observe for the opinion of the economic impact of immigration remains almost unaffected when we control from educational attainment, gender, and age. Four effects are significant for the other covariates: The odds for observing males in the Liberal Democrat category relative to the Labour Category decrease by a factor of 0.57 compared to females. A 10-year increase in age increases the odds of observing the Conservative category relative to the Labour category by a factor of 1.15. The coefficient for higher educated individuals in the Liberal Democrat category is 2, suggesting that for higher educated individuals, the odds increase by a factor of 2 for being in the Liberal Democrat category rather than the Labour category compared to lower educated individuals. The coefficient for higher educated individuals in the UKIP category is 0.561, suggesting that for higher educated individuals, the odds decrease by a factor of 0.561 for being in the UKIP category relative to the Labour category compared to lower educated individuals.
+
+```{r}
+
+library(lmtest)
+
+lrtest(m1,m2)%>%
+        tidy() %>%
+        bind_cols(Model = c("Model 1", "Model 2")) %>% 
+        mutate(p.value=ifelse(p.value<= 0.001, "p<0.001","")) %>% 
+        select(Model,X.Df,LogLik,df,statistic, p.value) %>% 
+        kbl(booktabs = T,
+            caption="Fit statistics for multinomial logit models of party vote choice,UK general election 2015") %>% 
+        kable_styling(latex_options = "HOLD_position")
+```
+
+Table 2 presents fit statistics for model 1 and model 2, which include sex, age, and educational attainment as additional explanatory variables. We observe that the likelihood ratio test rejects the hypothesis that these covariates have no effects on party vote choice. Thus, it seems that we have plausible evidence to accept the alternative hypothesis age, sex, and educational attainment have distinct effects on the party vote choice.
+
+To summarize, we find support for the claim that negative opinions of the economic impact of immigration are associated with UKIP and the Conservative party, and the effect is more substantial for the UKIP party. Conversely, the opposite seems to be the case for positive opinions on the economic impact of immigration. In addition, we observe that education is associated with more voting for more liberal parties. Even though further analysis is required to support the claim that party vote choice might not represent identification with a political party but rather alignment on the "Remain" and "Leave" dichotomy, we observe some indications lean towards that direction. For instance, the fact that the effects remain almost unaffected when we control from educational attainment, gender, and age indicates that this might be the case. This becomes apparent when comparing the differences in Model 1 and Model 2 in the odds ratio graph.
+
+```{r}
+m1_preds <-  tidy(m1, conf.int = TRUE, exponentiate = TRUE) %>%
+        mutate(Model = "Model 1")
+# Create modified data by mixing up the frequencies - doesn't do anything meaningful,
+#   just a way to get different coefficients
+
+m2_preds <-  tidy(m2, conf.int = TRUE, exponentiate = TRUE) %>%
+        mutate(Model = "Model 2")
+
+# At this point we have a table of odds ratios and confidence intervals
+#   for plotting
+ors <- bind_rows(m1_preds, m2_preds)
+
+pal2 <- c("#0087DC","#FAA61A", "grey", "#70147A")
+dodger = position_dodge(width = 0.4)
+xlab <- c("imbgeco" = "Economic impact \nof immigration", 
+         "male" = "Gender",
+         "age_rescale" = "Age",
+         "edulvlb" = "Higher\nEducation")
+```
+
+```{r fig.asp=0.8, fig.width=10, fig.height=10}
+or <- ors %>% 
+        filter(term != "(Intercept)") %>% 
+        ggplot(aes(y = estimate, x = term,color=y.level, shape = Model)) +
+        geom_pointrange(aes(ymin = conf.low, ymax = conf.high),
+                        position = dodger,
+                        size = 0.5) +
+        geom_hline(yintercept = 1.0, linetype = "dotted", size = 1) +
+        scale_colour_manual(values = pal2)+
+        scale_x_discrete(labels = xlab)+
+        scale_y_log10(breaks = c(0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10),
+                      minor_breaks = NULL) +
+        labs(y = "Odds ratio (Log-scale)", 
+             x = "",
+             color = "Party",
+             caption = "Data from ESS 2016.") +
+        coord_flip(ylim = c(0.1, 10)) +
+        ggthemes::theme_stata(base_size = 12, scheme = "s2mono")+
+        theme(axis.text.y = element_text(hjust = 0.5)
+            )
+or
+              
+
+```
+
+```{r fig.align='center',fig.width=10, fig.height=8}
+
+mydf <- ggeffect(m2, terms = c("imbgeco", "edulvlb"))
+names <- as_labeller(c(`0` = "Low Education", `1` = "High Education"))
+pal <- c("#0087DC","#E4003B","#FAA61A", "grey", "#70147A")
+
+plot <- ggplot(mydf, aes(x = x, y = predicted, color = response.level)) +
+        geom_line(size = 1.5) +
+        facet_wrap(~ group, labeller = names) +
+        scale_y_continuous(
+                           labels = percent_format(accuracy = 1)) +
+        scale_x_continuous(breaks = seq(0, 10, by = 2)) +
+        scale_colour_manual(values = pal) +
+        labs(title = "Party voted for in 2015 national election, United Kingdom",
+             subtitle = "Estimates from multinomial logistic regression",
+             x = "Position on economic impact of immigration (bad - good)",
+             y = "Predicted probability",
+             caption = "Data from ESS 2016.",
+             colour = "Party Vote") +
+        ggthemes::theme_stata(base_size = 12, scheme = "s2mono")
+
+plot
+
+```
+
+The figure above presents predicted probabilities for party vote choice for individuals with higher and lower education. We note that higher immigration attitude score implies a higher probability of voting Labour than for any other party, for both education levels. Overall, the results are in line with what we would expect from the above results: the probability of voting UKIP and conservative decreases as a function of a positive immigration stance, while the opposite holds for voting Liberal Democrat. The decline in probability is more marked among those without higher education, while the increase in probability follows the opposite pattern. Overall, the results are consistent with what we would expect based on the hypotheses: voting UKIP and conservatives drops as a function of higher values on the immigration attitude scale, while voting Liberal Democrat increases. he decrease in probability is more pronounced among people with lower education, whereas the increase in probability follows the reverse pattern.
+
+# Conclusion
+
+Overall, we have found evidence that supports our hypotheses: a negative stance on the economic impacts of immigration is positively associated with a vote for the Conservatives or UKIP, and negatively associated with a vote for the Liberal Democrats. The addition of controls for age, sex and higher education does not alter these relationships, despite the likelihood ratio test favoring the addition of these control variables. Further model estimation should therefore be done in order to evaluate this further. For instance, we could include a test of multicollinearity. We also want to stress the fact that the relationship between political identities discussed throughout the work, needs further evaluation in order to confirm it's plausibility. However, we do observe some indications that heads towards that direction at least.
+
+# Bibliography
